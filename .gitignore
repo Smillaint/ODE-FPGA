@@ -1,0 +1,22 @@
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 编译产物
+*.exe
+*.obj
+*.o
+
+# 梯度临时文件
+grad_client*.txt
+global_grad.txt
+
+# 结果图片
+# results/*.png
+
+# VSCode 配置
+.vscode/
+
+# 数据集
+data/
