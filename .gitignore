@@ -11,6 +11,7 @@ __pycache__/
 # 梯度临时文件
 grad_client*.txt
 global_grad.txt
+selected_indices.txt
 
 # 结果图片
 # results/*.png

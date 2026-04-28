@@ -1,56 +1,102 @@
-import os
 import subprocess
+import os
+from config import C_SELECTOR_EXE, HLS_CSIM_EXE, grad_path
 
 
-def call_c_selector(client_id, round_num, buffer_size, speed):
-    base_dir    = r"C:\Users\31854\ODE_FL"
-    selector    = os.path.join(base_dir, "ode_selector", "selector.exe")
-    grad_file   = f"grad_client{client_id}.txt"
-    global_file = "global_grad.txt"
+def call_c_selector(client_id, round_num, buffer_size, speed, use_fpga=True):
+    """
+    统一入口：决定调用 HLS 仿真还是 C 编译的基准程序
+    """
+    if use_fpga and HLS_CSIM_EXE and os.path.exists(HLS_CSIM_EXE):
+        print("  [ODE] 🔷 使用 FPGA 仿真选择器")
+        indices = _call_fpga_selector(client_id, round_num, buffer_size, speed)
+        if indices is not None:
+            return indices
+        print("  [ODE] ⚠️ FPGA 失败，回退 C 选择器")
 
-    if not os.path.exists(selector):
-        print(f"  ❌ 找不到 selector.exe: {selector}")
-        return []
-    if not os.path.exists(os.path.join(base_dir, grad_file)):
-        print(f"  ❌ 找不到梯度文件: {grad_file}")
-        return []
-    if not os.path.exists(os.path.join(base_dir, global_file)):
-        print(f"  ❌ 找不到全局梯度文件: {global_file}")
-        return []
+    print("  [ODE] 🔶 使用 C 选择器")
+    return _call_c_selector(client_id, round_num, buffer_size, speed)
 
-    cmd = [selector, grad_file, global_file,
-           str(round_num), str(buffer_size), str(speed)]
-    print(f"  [CMD] {' '.join(cmd)}")
+def _call_fpga_selector(client_id, round_num, buffer_size, speed):
+    """
+    调用 FPGA HLS 仿真的 csim.exe
+    """
+    grad_file = grad_path(f"grad_client{client_id}.txt")
+    global_grad_file = grad_path("global_grad.txt")
+    selected_file = grad_path("selected_indices.txt")
+
+    cmd = [
+        str(HLS_CSIM_EXE),
+        str(grad_file),
+        str(global_grad_file),
+        str(round_num),
+        str(buffer_size),
+        str(speed)
+    ]
 
     try:
+        # 核心修复：增加 encoding 和 errors 参数，防止 GBK 解码报错
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=base_dir,       # ← 工作目录必须是 ODE_FL\
-            timeout=60
+            encoding='utf-8',
+            errors='ignore',
+            timeout=120
         )
+
         if result.returncode != 0:
-            print(f"  ❌ selector.exe 异常退出，返回码: {result.returncode}")
-            print(f"  stderr: {result.stderr}")
-            return []
+            return None
 
-        selected = []
-        for line in result.stdout.strip().splitlines():
-            line = line.strip()
-            if line.startswith("Selected:"):
-                try:
-                    idx = int(line.split(":")[1].strip())
-                    selected.append(idx)
-                except ValueError:
-                    pass
-
-        print(f"  selector 输出: {result.stdout.strip()}")
-        return selected
-
-    except subprocess.TimeoutExpired:
-        print("  ❌ selector.exe 超时（超过 60 秒）")
-        return []
+        return _parse_selected_file(selected_file)
     except Exception as e:
-        print(f"  ❌ 调用 selector.exe 失败: {e}")
+        print(f"  [FPGA Error] {e}")
+        return None
+
+def _call_c_selector(client_id, round_num, buffer_size, speed):
+    """
+    调用传统的 C 语言编译的选择器 (selector.exe)
+    """
+    grad_file = grad_path(f"grad_client{client_id}.txt")
+    global_grad_file = grad_path("global_grad.txt")
+    selected_file = grad_path("selected_indices.txt")
+
+    if not os.path.exists(C_SELECTOR_EXE):
+        print(f"  [Error] 找不到 C 选择器: {C_SELECTOR_EXE}")
         return []
+
+    cmd = [
+        str(C_SELECTOR_EXE),
+        str(grad_file),
+        str(global_grad_file),
+        str(round_num),
+        str(buffer_size),
+        str(speed),
+    ]
+
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return _parse_selected_file(selected_file)
+    except Exception as e:
+        print(f"  [C Error] {e}")
+        return []
+
+def _parse_selected_file(file_path):
+    """
+    解析 selected_indices.txt 获取索引列表
+    """
+    indices = []
+    if not os.path.exists(file_path):
+        return None
+    try:
+        with open(file_path, "r") as f:
+            lines = f.readlines()
+            for line in lines:
+                line = line.strip()
+                if not line or "Round" in line:
+                    continue
+                indices.append(int(line))
+        return indices
+    except Exception as e:
+        print(f"  [Parse Error] {e}")
+        return None
